@@ -27,3 +27,15 @@ variable "environments" {
   type        = list(string)
   default     = ["staging", "prod"]
 }
+
+variable "github_owner_id" {
+  description = "GitHub owner ID"
+  type        = string
+  default     = "13206676"
+}
+
+variable "github_repo_id" {
+  description = "GitHub repository ID"
+  type        = string
+  default     = "1443773897"
+}

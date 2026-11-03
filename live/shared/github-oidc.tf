@@ -2,6 +2,11 @@ locals {
   oidc_host        = "token.actions.githubusercontent.com"
   repo             = "${var.github_owner}/${var.github_repo}"
   state_bucket_arn = "arn:aws:s3:::${var.state_bucket}"
+
+  # This repo uses GitHub's immutable subject claims, which embed the numeric
+  # owner and repo IDs. A recreated or renamed repo with the same name gets a
+  # new ID, so it can't match these trust policies.
+  repo_sub = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}"
 }
 
 # Only one provider per URL is allowed per account, and one already exists
@@ -32,7 +37,7 @@ data "aws_iam_policy_document" "plan_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["repo:${local.repo}:pull_request"]
+      values   = ["${local.repo_sub}:pull_request"]
     }
   }
 }
@@ -100,7 +105,7 @@ data "aws_iam_policy_document" "apply_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["repo:${local.repo}:environment:${each.key}"]
+      values   = ["${local.repo_sub}:environment:${each.key}"]
     }
   }
 }
