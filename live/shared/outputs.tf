@@ -11,3 +11,7 @@ output "apply_role_arns" {
 output "oidc_provider_arn" {
   value = data.aws_iam_openid_connect_provider.github.arn
 }
+
+output "ecr_repository_urls" {
+  value = { for k, r in aws_ecr_repository.this : k => r.repository_url }
+}
