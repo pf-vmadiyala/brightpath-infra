@@ -94,6 +94,71 @@ resource "aws_ecs_task_definition" "migrate" {
 }
 
 # ---------------------------------------------------------------------------
+# Pooled only: db-bootstrap creates this customer's database and MySQL user on
+# the shared RDS (admin credentials), granted on that database only. Safe to
+# re-run: it also resets the user's password to the one in Secrets Manager.
+# Order for a new pooled customer: bootstrap -> migrate -> app is usable.
+# ---------------------------------------------------------------------------
+locals {
+  # $VARS are shell variables (no braces), so Terraform leaves them alone.
+  # Identifiers are [a-z0-9_] and the password is alphanumeric: no quoting traps.
+  bootstrap_script = <<-EOT
+    set -eu
+    export MYSQL_PWD="$MASTER_PASSWORD"
+    mysql --ssl-mode=REQUIRED -h "$DB_HOST" -u "$MASTER_USER" -e "
+      CREATE DATABASE IF NOT EXISTS $DB_NAME;
+      CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PASSWORD';
+      ALTER USER '$APP_USER'@'%' IDENTIFIED BY '$APP_PASSWORD';
+      GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$APP_USER'@'%';"
+    echo "database $DB_NAME and user $APP_USER are ready"
+  EOT
+}
+
+resource "aws_ecs_task_definition" "db_bootstrap" {
+  count = local.pooled ? 1 : 0
+
+  family                   = "${local.full_name}-db-bootstrap"
+  requires_compatibilities = ["EC2"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 256
+  execution_role_arn       = aws_iam_role.bootstrap[0].arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name = "db-bootstrap"
+      # ECR Public mirror of the official image: no Docker Hub rate limits.
+      image      = "public.ecr.aws/docker/library/mysql:8.4"
+      essential  = true
+      entryPoint = ["sh", "-c"]
+      command    = [local.bootstrap_script]
+
+      environment = [
+        { name = "DB_HOST", value = local.db_host },
+        { name = "DB_NAME", value = local.db_name },
+        { name = "APP_USER", value = local.db_user },
+      ]
+
+      secrets = [
+        { name = "MASTER_USER", valueFrom = "${local.shared_db_secret_arn}:username::" },
+        { name = "MASTER_PASSWORD", valueFrom = "${local.shared_db_secret_arn}:password::" },
+        { name = "APP_PASSWORD", valueFrom = local.db_password_from },
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options   = merge(local.log_options, { awslogs-stream-prefix = "db-bootstrap" })
+      }
+    }
+  ])
+}
+
+# ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
 resource "aws_ecs_service" "app" {
