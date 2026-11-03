@@ -1,0 +1,102 @@
+name: Terraform apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'live/**'
+      - 'modules/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_VERSION: 1.14.5
+  AWS_REGION: us-east-2
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      staging: ${{ steps.changed.outputs.staging }}
+      prod: ${{ steps.changed.outputs.prod }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Find changed stacks, split by environment
+        id: changed
+        run: |
+          base="${{ github.event.before }}"
+          # First push to a branch has no "before" commit.
+          if [[ "$base" =~ ^0+$ ]]; then base="$(git rev-parse HEAD~1)"; fi
+          all=$(.github/scripts/changed-stacks.sh "$base" "${{ github.sha }}")
+          echo "Changed stacks: $all"
+          # live/shared is applied locally: the pipeline can't manage its own login roles.
+          echo "staging=$(jq -c '[.[] | select(startswith("live/staging/"))]' <<<"$all")" >> "$GITHUB_OUTPUT"
+          echo "prod=$(jq -c '[.[] | select(startswith("live/prod/"))]' <<<"$all")" >> "$GITHUB_OUTPUT"
+
+  apply-staging:
+    needs: detect
+    if: needs.detect.outputs.staging != '[]'
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJSON(needs.detect.outputs.staging) }}
+    concurrency:
+      # Never cancel an apply. A queued newer run applies the full state of the
+      # folder at its commit, which already includes the older run's changes.
+      group: tf-apply-${{ matrix.dir }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}   # staging environment's value
+          aws-region: ${{ env.AWS_REGION }}
+      - run: terraform init -input=false
+      - run: terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan
+      - run: terraform apply -input=false -no-color -lock-timeout=5m tfplan
+
+  # Prod waits for staging to succeed, then for a reviewer to approve the environment.
+  apply-prod:
+    needs: [detect, apply-staging]
+    if: >-
+      always() &&
+      needs.detect.outputs.prod != '[]' &&
+      (needs.apply-staging.result == 'success' || needs.apply-staging.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: prod
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJSON(needs.detect.outputs.prod) }}
+    concurrency:
+      group: tf-apply-${{ matrix.dir }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}   # prod environment's value
+          aws-region: ${{ env.AWS_REGION }}
+      - run: terraform init -input=false
+      - run: terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan
+      - run: terraform apply -input=false -no-color -lock-timeout=5m tfplan
