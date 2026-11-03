@@ -15,6 +15,16 @@ locals {
   alb_sg_id         = data.aws_ssm_parameter.platform["alb_sg_id"].insecure_value
   alb_dns_name      = data.aws_ssm_parameter.platform["alb_dns_name"].insecure_value
 
+  # Shared database, published only by platforms with shared_database = true.
+  pooled               = var.database == "pooled"
+  shared_db_address    = try(data.aws_ssm_parameter.platform["db_address"].insecure_value, null)
+  shared_db_secret_arn = try(data.aws_ssm_parameter.platform["db_master_secret_arn"].insecure_value, null)
+  shared_db_sg_id      = try(data.aws_ssm_parameter.platform["db_sg_id"].insecure_value, null)
+  platform_ssm_parameters = concat(
+    ["cluster_arn", "cluster_name", "capacity_provider", "listener_arn", "alb_sg_id", "alb_dns_name"],
+    local.pooled ? ["db_address", "db_master_secret_arn", "db_sg_id"] : [],
+  )
+
   app_image     = "${data.aws_ssm_parameter.ecr["app_repository_url"].insecure_value}:${var.image_tag}"
   migrate_image = "${data.aws_ssm_parameter.ecr["migrate_repository_url"].insecure_value}:${var.image_tag}"
 
@@ -30,7 +40,7 @@ data "aws_ssm_parameter" "network" {
 }
 
 data "aws_ssm_parameter" "platform" {
-  for_each = toset(["cluster_arn", "cluster_name", "capacity_provider", "listener_arn", "alb_sg_id", "alb_dns_name"])
+  for_each = toset(local.platform_ssm_parameters)
   name     = "${local.platform_prefix}/${each.key}"
 }
 

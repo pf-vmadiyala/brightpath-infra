@@ -18,6 +18,17 @@ variable "platform" {
   type        = string
 }
 
+variable "database" {
+  description = "dedicated = own RDS instance (large customers). pooled = own database + user on the platform's shared RDS (needs a platform with shared_database = true)."
+  type        = string
+  default     = "dedicated"
+
+  validation {
+    condition     = contains(["dedicated", "pooled"], var.database)
+    error_message = "database must be \"dedicated\" or \"pooled\"."
+  }
+}
+
 variable "hostname" {
   description = "Host header the ALB routes to this customer, e.g. acme.staging.brightpath.test"
   type        = string

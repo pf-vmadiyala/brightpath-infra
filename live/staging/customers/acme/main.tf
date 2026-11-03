@@ -5,6 +5,7 @@ module "customer" {
   name        = "acme"
   environment = "staging"
   platform    = "shared-01"
+  database    = "pooled" # own database + user on the shared-01 RDS
 
   hostname               = "acme.staging.brightpath.test"
   listener_rule_priority = 100
