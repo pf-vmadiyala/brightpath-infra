@@ -37,3 +37,27 @@ variable "alb_ingress_cidrs" {
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
+
+variable "shared_database" {
+  description = "Create one RDS instance for this platform's pooled customers. Each pooled customer gets its own database and MySQL user on it."
+  type        = bool
+  default     = false
+}
+
+variable "db_instance_class" {
+  description = "Shared RDS instance class (only used when shared_database = true)"
+  type        = string
+  default     = "db.t4g.micro"
+}
+
+variable "db_allocated_storage" {
+  description = "Shared RDS storage in GiB"
+  type        = number
+  default     = 20
+}
+
+variable "db_protect" {
+  description = "Prod: true (deletion protection, final snapshot). Lab/staging: false."
+  type        = bool
+  default     = false
+}
